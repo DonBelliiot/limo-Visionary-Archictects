@@ -1,4 +1,4 @@
-# limo-Visionary-Archictects
+# limo-Visionary-Architects
 
 ## 📌 1. Project Overview (M1 Focus)
 
@@ -24,7 +24,7 @@ The project is designed and developed by a group of seven collaborators assigned
 | **Khobatha Setetemela** | `@khobatha` | - | Course Coordinator & Project Advisor |
 | **Liposo Ranoka** | `@Liposo-Ranoka` | 202400088 | Student Collaborator |
 | **Matseliso Kheola** | `@Matseliso20` | 202202304 | Student Collaborator |
-| **Tumo Ts'ehla** | `@tsehlatumo-ops` | 202400550 | Student Collaborator |
+| **Tumo Tsehla** | `@tsehlatumo-ops` | 202400550 | Student Collaborator |
 | **Thaane Moletsane** | `@THMN123` | 202322687 | Student Collaborator |
 
 ## 3. Team Roles & Weekly Rotation Schedule
