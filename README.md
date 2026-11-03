@@ -7,17 +7,40 @@
 
 ---
 
+## ⚡ Milestone 3 (M3) — Pipeline Core & Hazard-Free Execution
+
+This repository contains the complete implementation for **Milestone 3 (M3)**:
+* **5-Stage Pipeline Core:** Synchronous clock-cycle execution across all five stages:
+  - **IF (Instruction Fetch):** Latching instructions at `PC`, incrementing by 4, handling branch redirect targets.
+  - **ID (Instruction Decode & Reg Fetch):** Decoding 10 Sesotho mnemonics, latching source operands ($rs_1$, $rs_2$), sign-extending immediates (12-bit / 13-bit branch), and generating hardwired control signals.
+  - **EX (Execute / Address Calc):** 32-bit ALU computation (`ADD`, `SUB`, `AND`, `OR`, `SLL`), address calculation for memory instructions, and **Section 3(e) Zero-Flag Direct Branch Evaluation** (`hlk` equality and `hft` greater-than). Speculatively fetched instructions in IF/ID and ID/EX are flushed upon taken branch.
+  - **MEM (Data Memory Access):** Synchronous access for store word (`blk`) and load word (`lt`) on 32-bit word-aligned memory.
+  - **WB (Write-Back):** Committing results to the 32-register architectural file on falling clock edge. Register $r0$ (`Letho`) invariant is strictly enforced ($r0 \equiv 0$).
+* **Pipeline Registers & Control Unit:** Inter-stage registers (`IF/ID` [65b], `ID/EX` [171b], `EX/MEM` [139b], `MEM/WB` [136b]) and hardwired Table 5 control truth table (`RegWrite`, `ALUSrc`, `ALUOp`, `MemRead`, `MemWrite`, `Branch`, `MemToReg`). Full technical specification in [`docs/M3_PIPELINE_CORE.md`](docs/M3_PIPELINE_CORE.md).
+* **Execution Controls:**
+  - **Step (<kbd>F10</kbd>):** Single synchronous clock cycle advance with live stage pill glowing and per-stage instruction logging.
+  - **Run (<kbd>F5</kbd>):** Continuous execution until pipeline drain or breakpoint.
+  - **Reset (<kbd>F9</kbd>):** Instant clearing of PC (0x00400000), register file, pipeline bubbles, and data memory.
+* **Live Register & Memory Views:**
+  - 32 architectural registers with Sesotho names, decimal/hex toggle, and live **WB commit glowing pulse** highlight.
+  - Memory Hex Viewer with 32-bit word alignment, **Store write highlight**, arbitrary address jump (`memJumpInput`), and memory clear.
+* **Hazard-Free Test Programs:** Verified with dedicated programs:
+  - `examples/06_hazard_free_arithmetic.s`: Arithmetic and logic operations with 2-NOP spacing.
+  - `examples/07_hazard_free_memory.s`: Store and load word with memory round-trip verification.
+  - `examples/08_hazard_free_control.s`: Loop branches (`hlk`, `hft`) with deterministic 2-cycle branch penalty flushes.
+* **Automated Unit Testing (54 Tests Total, 100% Pass Rate):**
+  - 25 Pipeline Core tests in [`tests/pipeline.test.js`](tests/pipeline.test.js) & [`tests/test_pipeline.py`](tests/test_pipeline.py).
+  - 29 Assembler tests in [`tests/assembler.test.js`](tests/assembler.test.js) & [`tests/test_assembler.py`](tests/test_assembler.py).
+* **Release Tag:** Tagged `m3`.
+
+---
+
 ## 🚀 Milestone 2 (M2) — Simulator Design & Working Assembler
 
-This repository contains the complete implementation for **Milestone 2 (M2)**:
-* **Architecture & Block Diagram:** 5-stage pipelined Harvard datapath (IF, ID, EX, MEM, WB) documented in [`docs/M2_SIMULATOR_DESIGN.md`](docs/M2_SIMULATOR_DESIGN.md) and interactively rendered as an interactive SVG block diagram with clickable datapath components.
-* **Pipeline-Register Data Model:** Bit-accurate pipeline register specifications (IF/ID [65b], ID/EX [171b], EX/MEM [139b], MEM/WB [136b]), latch conditions, bubble/flush signals, and TypeScript/JS interfaces in [`docs/PIPELINE_REGISTER_DATA_MODEL.md`](docs/PIPELINE_REGISTER_DATA_MODEL.md).
-* **Interface Wireframes:** Comprehensive UI/UX blueprints for the Primary IDE, 5-Stage Visualizer, Datapath Explorer, and Unit Test Runner documented in [`docs/WIREFRAMES.md`](docs/WIREFRAMES.md) and accessible via interactive modals on the site.
-* **Working Assembler with Unit Tests:** 29 automated test cases verifying all 10 Sesotho instructions, R/I/S/B encodings, M1 hand-encoded benchmarks, 32 register aliases, and signed immediate range bounds:
-  - CLI execution via Python: `python tests/test_assembler.py` (29 passed, 0 failed).
-  - CLI execution via Node.js: `node tests/assembler.test.js`.
-  - In-browser interactive test runner with category filtering, real-time metrics, and JSON report export (`F8` shortcut).
-* **GitHub Pages CI/CD:** Automated workflow in [`.github/workflows/pages.yml`](.github/workflows/pages.yml) deploying the application directly to GitHub Pages.
+* **Architecture & Block Diagram:** 5-stage pipelined Harvard datapath (IF, ID, EX, MEM, WB) documented in [`docs/M2_SIMULATOR_DESIGN.md`](docs/M2_SIMULATOR_DESIGN.md) and interactively rendered as an SVG block diagram.
+* **Pipeline-Register Data Model:** Bit-accurate pipeline register specifications documented in [`docs/PIPELINE_REGISTER_DATA_MODEL.md`](docs/PIPELINE_REGISTER_DATA_MODEL.md).
+* **Interface Wireframes:** Comprehensive UI/UX blueprints documented in [`docs/WIREFRAMES.md`](docs/WIREFRAMES.md).
+* **Working Assembler with Unit Tests:** 29 automated test cases verifying all 10 Sesotho instructions, R/I/S/B encodings, and aliases.
 * **Release Tag:** Tagged `m2`.
 
 ---
@@ -27,16 +50,24 @@ This repository contains the complete implementation for **Milestone 2 (M2)**:
 ### Option A: Via Browser UI
 1. Open the [Live Web Application](https://thmn123.github.io/limo-Visionary-Architects/) (or open `index.html` locally).
 2. Click **Tests (F8)** in the top header or press <kbd>F8</kbd>.
-3. The interactive runner executes all 29 verification tests in real time, displaying pass/fail badges, hex encodings, category breakdowns, and JSON export.
+3. The interactive runner executes all 54 verification tests in real time, displaying pass/fail badges, hex encodings, category breakdowns, and JSON export.
 
-### Option B: Via Command Line (Python)
+### Option B: Via Command Line (Node.js)
 ```bash
-python tests/test_assembler.py
+# Run 25 M3 Pipeline Core & Hazard-Free Tests
+node tests/pipeline.test.js
+
+# Run 29 M2 Assembler Encoding Tests
+node tests/assembler.test.js
 ```
 
-### Option C: Via Command Line (Node.js)
+### Option C: Via Command Line (Python)
 ```bash
-node tests/assembler.test.js
+# Run Pipeline Core Tests
+python tests/test_pipeline.py
+
+# Run Assembler Tests
+python tests/test_assembler.py
 ```
 
 ---

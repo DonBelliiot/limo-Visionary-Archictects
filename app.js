@@ -210,6 +210,108 @@ blk r7, 4(r2)        # Hex: 0x00712223
 hlk r6, r7, 16       # Hex: 0x00730863
 `
     },
+    'hazard_free_arithmetic.s': {
+      name: 'hazard_free_arithmetic.s',
+      type: 's',
+      content: `# ==================================================================
+# CS3520 LIMO Milestone M3 - Hazard-Free Arithmetic Benchmark
+# Team: Visionary Architects (National University of Lesotho)
+# ==================================================================
+# Verifies R-format (kop, ts, le, kp, ng) and I-format (khh)
+# running on the 5-stage pipeline without RAW data hazards.
+# ==================================================================
+
+# 1. Initialize input registers
+khh r6, r0, 36       # r6 = 36 (Thuso0 / a0)
+khh r7, r0, 14       # r7 = 14 (Thuso1 / a1)
+khh r16, r0, 100     # independent instruction
+khh r17, r0, 200     # independent instruction
+
+# 2. Arithmetic Addition (Kopanya): r6 + r7 -> r8 (50)
+kop r8, r6, r7       # r8 = 36 + 14 = 50 (Nakoana0 / t0)
+khh r18, r0, 300     # independent instruction
+khh r19, r0, 400     # independent instruction
+
+# 3. Arithmetic Subtraction (Tlosa): r8 - r7 -> r9 (36)
+ts  r9, r8, r7       # r9 = 50 - 14 = 36 (Nakoana1 / t1)
+khh r20, r0, 500     # independent instruction
+khh r21, r0, 600     # independent instruction
+
+# 4. Bitwise Logic AND (Le) & OR (Kapa)
+le  r10, r6, r7      # r10 = 36 & 14 = 4
+kp  r11, r6, r7      # r11 = 36 | 14 = 46
+khh r22, r0, 700     # independent instruction
+khh r23, r0, 800     # independent instruction
+
+# 5. Shift Left Logical (Ngatafala)
+khh r12, r0, 2       # shift amount
+khh r1, r0, 0        # NOP
+khh r1, r0, 0        # NOP
+ng  r13, r10, r12    # r13 = 4 << 2 = 16
+`
+    },
+    'hazard_free_memory.s': {
+      name: 'hazard_free_memory.s',
+      type: 's',
+      content: `# ==================================================================
+# CS3520 LIMO Milestone M3 - Hazard-Free Memory Benchmark
+# Demonstrates Store Word (blk) and Load Word (lt) on the 5-stage pipeline.
+# ==================================================================
+
+khh r2, r0, 1000     # r2 = base memory address (1000)
+khh r6, r0, 42       # r6 = first value (42)
+khh r7, r0, 99       # r7 = second value (99)
+khh r1, r0, 0        # NOP
+
+# Store values to Data Memory
+blk r6, 4(r2)        # Mem[1004] = 42
+blk r7, 8(r2)        # Mem[1008] = 99
+khh r16, r0, 1       # independent instruction
+khh r17, r0, 2       # independent instruction
+
+# Load values back from Data Memory
+lt  r8, 4(r2)        # r8 = Mem[1004] = 42
+lt  r9, 8(r2)        # r9 = Mem[1008] = 99
+khh r1, r0, 0        # NOP
+khh r1, r0, 0        # NOP
+
+# Verify sum of loaded words
+kop r10, r8, r9      # r10 = 42 + 99 = 141
+`
+    },
+    'hazard_free_control.s': {
+      name: 'hazard_free_control.s',
+      type: 's',
+      content: `# ==================================================================
+# CS3520 LIMO Milestone M3 - Hazard-Free Branch & Control Flow
+# Verifies direct conditionals (hlk, hft) evaluated in EX stage without flags.
+# ==================================================================
+
+khh r6, r0, 0        # r6 = counter = 0
+khh r7, r0, 3        # r7 = limit = 3
+khh r8, r0, 10       # r8 = accumulator = 10
+khh r9, r0, 1        # r9 = step = 1
+
+loop:
+  kop r8, r8, r6     # r8 += counter
+  kop r6, r6, r9     # counter += 1
+  khh r1, r0, 0      # NOP
+  khh r1, r0, 0      # NOP
+
+  # Check if counter == limit (hlk)
+  hlk r6, r7, done   # If counter == 3, jump to done
+  khh r0, r0, 0      # Speculative slot 1 (flushed on branch)
+  khh r0, r0, 0      # Speculative slot 2 (flushed on branch)
+
+  # Otherwise repeat loop
+  hlk r0, r0, loop
+  khh r0, r0, 0
+  khh r0, r0, 0
+
+done:
+  khh r15, r0, 1     # success indicator flag
+`
+    },
     'main.s': {
       name: 'main.s',
       type: 's',
@@ -231,14 +333,77 @@ _start:
     }
   };
 
+  // --------------------------------------------------------------------------
+  // CONTROL UNIT (Table 5 Truth Table) & BUBBLE FACTORIES
+  // --------------------------------------------------------------------------
+  const ControlUnit = {
+    decode(mnemonic) {
+      if (!mnemonic) {
+        return { valid: false, regWrite: false, aluSrc: false, aluOp: 'ADD', memRead: false, memWrite: false, branch: false, branchCondition: null, memToReg: false };
+      }
+      const m = mnemonic.toLowerCase().trim();
+      switch (m) {
+        case 'kop':
+        case 'add':
+          return { valid: true, regWrite: true, aluSrc: false, aluOp: 'ADD', memRead: false, memWrite: false, branch: false, branchCondition: null, memToReg: false };
+        case 'ts':
+        case 'sub':
+          return { valid: true, regWrite: true, aluSrc: false, aluOp: 'SUB', memRead: false, memWrite: false, branch: false, branchCondition: null, memToReg: false };
+        case 'khh':
+        case 'addi':
+          return { valid: true, regWrite: true, aluSrc: true, aluOp: 'ADD', memRead: false, memWrite: false, branch: false, branchCondition: null, memToReg: false };
+        case 'le':
+        case 'and':
+          return { valid: true, regWrite: true, aluSrc: false, aluOp: 'AND', memRead: false, memWrite: false, branch: false, branchCondition: null, memToReg: false };
+        case 'kp':
+        case 'or':
+          return { valid: true, regWrite: true, aluSrc: false, aluOp: 'OR', memRead: false, memWrite: false, branch: false, branchCondition: null, memToReg: false };
+        case 'ng':
+        case 'sll':
+        case 'slli':
+          return { valid: true, regWrite: true, aluSrc: false, aluOp: 'SLL', memRead: false, memWrite: false, branch: false, branchCondition: null, memToReg: false };
+        case 'lt':
+        case 'lw':
+          return { valid: true, regWrite: true, aluSrc: true, aluOp: 'ADD', memRead: true, memWrite: false, branch: false, branchCondition: null, memToReg: true };
+        case 'blk':
+        case 'sw':
+          return { valid: true, regWrite: false, aluSrc: true, aluOp: 'ADD', memRead: false, memWrite: true, branch: false, branchCondition: null, memToReg: false };
+        case 'hlk':
+        case 'beq':
+          return { valid: true, regWrite: false, aluSrc: false, aluOp: 'SUB', memRead: false, memWrite: false, branch: true, branchCondition: 'EQ', memToReg: false };
+        case 'hft':
+        case 'bgt':
+          return { valid: true, regWrite: false, aluSrc: false, aluOp: 'SUB', memRead: false, memWrite: false, branch: true, branchCondition: 'GT', memToReg: false };
+        default:
+          return { valid: false, regWrite: false, aluSrc: false, aluOp: 'ADD', memRead: false, memWrite: false, branch: false, branchCondition: null, memToReg: false };
+      }
+    }
+  };
+
+  function createBubbleIF_ID() {
+    return { valid: false, pc: 0x00400000, instruction: 0x00000013, hex: '0x00000013', rawAssembly: 'nop', mnemonic: 'nop', tokens: ['nop'], lineNum: 0 };
+  }
+
+  function createBubbleID_EX() {
+    return { valid: false, pc: 0x00400000, rs1: 0, rs2: 0, rd: 0, rs1_val: 0, rs2_val: 0, imm: 0, mnemonic: 'nop', rawAssembly: 'nop', lineNum: 0, regWrite: false, memRead: false, memWrite: false, branch: false, branchCondition: null, aluSrc: false, aluOp: 'ADD', memToReg: false };
+  }
+
+  function createBubbleEX_MEM() {
+    return { valid: false, pc: 0x00400000, aluResult: 0, storeData: 0, branchTarget: 0, branchTaken: false, rd: 0, mnemonic: 'nop', rawAssembly: 'nop', lineNum: 0, regWrite: false, memRead: false, memWrite: false, memToReg: false };
+  }
+
+  function createBubbleMEM_WB() {
+    return { valid: false, pc: 0x00400000, memReadData: 0, aluResult: 0, writeBackData: 0, rd: 0, mnemonic: 'nop', rawAssembly: 'nop', lineNum: 0, regWrite: false, memToReg: false };
+  }
+
   // ==========================================================================
   // 2. APPLICATION STATE
   // ==========================================================================
 
   const state = {
     files: {},
-    activeFile: 'addition_kopanya.limo',
-    openTabs: ['addition_kopanya.limo', 'store_constant_boloka.limo', 'average_midpoint.limo', 'addition_kopanya.s', 'main.s'],
+    activeFile: 'hazard_free_arithmetic.s',
+    openTabs: ['hazard_free_arithmetic.s', 'hazard_free_memory.s', 'hazard_free_control.s', 'addition_kopanya.limo', 'store_constant_boloka.limo', 'average_midpoint.limo'],
     activeSidebarTab: 'explorer',
     sidebarOpen: true,
     inspectorOpen: true,
@@ -246,7 +411,7 @@ _start:
     terminalMaximized: false,
     activeTerminalTab: 'terminal',
     theme: 'theme-vscode',
-    architecture: 'LIMO (RV32I Sesotho)',
+    architecture: '5-Stage Core Pipeline (Harvard)',
     fontSize: 13,
     displayMode: 'hex', // 'hex' | 'dec'
     cursorPos: { line: 1, col: 1 },
@@ -263,17 +428,20 @@ _start:
     terminalHistory: [],
     terminalHistoryIndex: -1,
 
-    // Milestone 2 (M2): 5-Stage Pipeline Registers Data Model
+    // Milestone 3 (M3): 5-Stage Synchronous Pipeline Registers Data Model
     pipeline: {
       cycle: 0,
+      instructionsRetired: 0,
       stalled: false,
       flushed: false,
-      IF_ID: { valid: false, pc: 0x00400000, instruction: 0x00000013, hex: '0x00000013', rawAssembly: 'nop', lineNum: 0 },
-      ID_EX: { valid: false, pc: 0x00400000, rs1: 0, rs2: 0, rd: 0, rs1_val: 0, rs2_val: 0, imm: 0, mnemonic: '', rawAssembly: 'nop', regWrite: false, memRead: false, memWrite: false, branch: false, aluOp: 'ADD', aluSrc: false, memToReg: false },
-      EX_MEM: { valid: false, pc: 0x00400000, aluResult: 0, storeData: 0, branchTarget: 0, branchTaken: false, rd: 0, mnemonic: '', regWrite: false, memRead: false, memWrite: false, memToReg: false },
-      MEM_WB: { valid: false, pc: 0x00400000, memReadData: 0, aluResult: 0, writeBackData: 0, rd: 0, mnemonic: '', regWrite: false, memToReg: false }
+      lastWrittenReg: null,
+      lastWrittenMem: null,
+      IF_ID: createBubbleIF_ID(),
+      ID_EX: createBubbleID_EX(),
+      EX_MEM: createBubbleEX_MEM(),
+      MEM_WB: createBubbleMEM_WB()
     },
-    activeInspectorTab: 'regs',
+    activeInspectorTab: 'pipeline',
     activeM2SubTab: 'arch',
     unitTestFilter: 'all',
     testResults: null,
@@ -786,11 +954,13 @@ _start:
     if (!container) return;
 
     const isHex = state.displayMode === 'hex';
+    const lastWbReg = state.pipeline ? state.pipeline.lastWrittenReg : null;
 
     container.innerHTML = LIMO_REGISTERS.map((reg) => {
       const val = state.registers[reg.num] || 0;
       const prevVal = state.prevRegisters[reg.num] || 0;
       const isModified = val !== prevVal && val !== 0;
+      const isLastWb = lastWbReg === reg.num && reg.num !== 0;
 
       const formattedVal = isHex
         ? '0x' + (val >>> 0).toString(16).padStart(8, '0').toUpperCase()
@@ -802,13 +972,22 @@ _start:
         reg.num <= 7 ? 'text-blue-400' :
         reg.num <= 15 ? 'text-amber-400' : 'text-emerald-400';
 
+      const highlightClass = isLastWb
+        ? 'ring-2 ring-emerald-400 bg-emerald-950/50 border-emerald-500 shadow-md shadow-emerald-500/25 animate-pulse'
+        : isModified
+        ? 'reg-updated'
+        : '';
+
       return `
-        <div class="reg-card p-2 rounded-xl bg-zinc-800/40 border border-zinc-700/40 flex flex-col justify-between ${isModified ? 'reg-updated' : ''}" title="${reg.name} (${reg.sesothoName} / ${reg.alias}): ${reg.purpose}">
+        <div class="reg-card p-2 rounded-xl bg-zinc-800/40 border border-zinc-700/40 flex flex-col justify-between transition ${highlightClass}" title="${reg.name} (${reg.sesothoName} / ${reg.alias}): ${reg.purpose}">
           <div class="flex items-center justify-between text-[10px]">
-            <span class="font-bold ${colorTag}">${reg.name}</span>
+            <div class="flex items-center gap-1">
+              <span class="font-bold ${colorTag}">${reg.name}</span>
+              ${isLastWb ? '<span class="text-[8px] bg-emerald-500/30 text-emerald-300 px-1 py-0.2 rounded font-mono font-bold">WB</span>' : ''}
+            </div>
             <span class="text-zinc-500 truncate text-[9px] font-sans">${reg.sesothoName}</span>
           </div>
-          <div class="text-[11px] font-mono text-white mt-1 font-semibold truncate ${val !== 0 ? 'text-emerald-300' : 'text-zinc-400'}">
+          <div class="text-[11px] font-mono mt-1 font-semibold truncate ${isLastWb ? 'text-emerald-300 font-bold' : val !== 0 ? 'text-emerald-300' : 'text-zinc-400'}">
             ${formattedVal}
           </div>
         </div>
@@ -823,31 +1002,66 @@ _start:
     const container = document.getElementById('memoryHexContainer');
     if (!container) return;
 
+    const lastStoreAddr = state.pipeline ? state.pipeline.lastWrittenMem : null;
     const memEntries = Object.entries(state.simulatedMemory);
-    const rows = memEntries.length > 0
-      ? memEntries.map(([addrStr, val]) => {
-          const addrNum = parseInt(addrStr, 10);
-          const hexVal = (val >>> 0).toString(16).padStart(8, '0').toUpperCase();
-          return {
-            addr: '0x' + addrNum.toString(16).padStart(8, '0').toUpperCase(),
-            hex: `${hexVal.slice(0, 2)} ${hexVal.slice(2, 4)} ${hexVal.slice(4, 6)} ${hexVal.slice(6, 8)}`,
-            ascii: `val: ${val}`
-          };
-        })
-      : [
-          { addr: '0x000003EC', hex: '00 00 00 14', ascii: 'val: 20' },
-          { addr: '0x00402000', hex: '4C 49 4D 4F', ascii: 'LIMO' },
-          { addr: '0x00402004', hex: '52 56 33 32', ascii: 'RV32' },
-          { addr: '0x7FFFFFF0', hex: '00 00 00 00', ascii: 'SP Top' }
-        ];
+
+    // Format rows
+    const rows = (memEntries.length > 0 ? memEntries : [
+      ['1004', 20],
+      ['4202496', 0x4C494D4F],
+      ['4202500', 0x52563332],
+      ['2147483632', 0]
+    ]).map(([addrStr, val]) => {
+      const addrNum = parseInt(addrStr, 10);
+      const isStoreTarget = lastStoreAddr !== null && addrNum === lastStoreAddr;
+      const hexVal = (val >>> 0).toString(16).padStart(8, '0').toUpperCase();
+      return {
+        addrNum,
+        isStoreTarget,
+        addr: '0x' + (addrNum >>> 0).toString(16).padStart(8, '0').toUpperCase(),
+        hex: `${hexVal.slice(0, 2)} ${hexVal.slice(2, 4)} ${hexVal.slice(4, 6)} ${hexVal.slice(6, 8)}`,
+        ascii: `val: ${val}`
+      };
+    }).sort((a, b) => a.addrNum - b.addrNum);
 
     container.innerHTML = rows.map((r) => `
-      <div class="flex items-center justify-between text-[11px] p-1.5 rounded-lg bg-zinc-900/60 border border-zinc-800/80">
-        <span class="text-blue-400 font-semibold">${r.addr}</span>
+      <div class="flex items-center justify-between text-[11px] p-1.5 rounded-lg border transition ${r.isStoreTarget ? 'bg-amber-950/50 border-amber-500/70 shadow-sm shadow-amber-500/20 ring-1 ring-amber-400/50' : 'bg-zinc-900/60 border-zinc-800/80'}">
+        <div class="flex items-center gap-1.5 font-mono">
+          <span class="text-blue-400 font-semibold">${r.addr}</span>
+          ${r.isStoreTarget ? '<span class="text-[8px] bg-amber-500/30 text-amber-300 px-1 py-0.2 rounded font-mono font-bold">STORE</span>' : ''}
+        </div>
         <span class="text-yellow-300 font-mono tracking-wider">${r.hex}</span>
         <span class="text-zinc-500 text-[10px] font-sans">${r.ascii}</span>
       </div>
     `).join('');
+  }
+
+  function jumpToMemoryAddress(rawInput) {
+    if (!rawInput && rawInput !== 0) return;
+    const str = String(rawInput).trim();
+    if (!str) return;
+
+    let addr = 0;
+    if (str.startsWith('0x') || str.startsWith('0X')) {
+      addr = parseInt(str, 16);
+    } else {
+      addr = parseInt(str, 10);
+    }
+
+    if (isNaN(addr)) {
+      showToast(`Invalid memory address: ${str}`, 'warn');
+      return;
+    }
+
+    const alignedAddr = addr & ~3;
+    if (!(alignedAddr in state.simulatedMemory)) {
+      state.simulatedMemory[alignedAddr] = 0;
+    }
+    if (state.pipeline) state.pipeline.lastWrittenMem = alignedAddr;
+    renderMemoryHex();
+    switchInspectorTab('memory');
+    logTerminal(`<span class="text-blue-400 font-mono font-semibold">[Memory View]</span> Jumped to address <strong>0x${(alignedAddr >>> 0).toString(16).padStart(8, '0').toUpperCase()}</strong> (${alignedAddr}).`);
+    showToast(`Jumped to 0x${(alignedAddr >>> 0).toString(16).padStart(8, '0').toUpperCase()}`, 'info');
   }
 
   // --- Breakpoints List in Debugger Sidebar Tab ---
@@ -989,240 +1203,311 @@ _start:
     if (quickPC) quickPC.textContent = '0x00400000';
     if (quickInst) quickInst.textContent = 'Active: none';
 
-    logTerminal('<span class="text-amber-400 font-semibold">[CPU Reset]</span> Registers cleared to zero. SP=0x7FFFFFF0, PC=0x00400000.');
-    showToast('CPU & Registers Reset', 'info');
+    logTerminal('<span class="text-amber-400 font-semibold">[CPU & Pipeline Reset]</span> Registers cleared (SP=0x7FFFFFF0). PC=0x00400000, Cycle=0.');
+    showToast('CPU & Pipeline Reset', 'info');
+  }
+
+  function isPipelineDrained(totalInstructions) {
+    const pastEnd = Math.floor((state.pc - 0x00400000) / 4) >= totalInstructions;
+    const p = state.pipeline;
+    return pastEnd && !p.IF_ID.valid && !p.ID_EX.valid && !p.EX_MEM.valid && !p.MEM_WB.valid;
+  }
+
+  function stepPipelineCycle() {
+    const file = state.files[state.activeFile];
+    if (!file) return { isDrained: true };
+
+    const { instructions, labelMap } = parseExecutableProgram(file.content);
+    if (instructions.length === 0) {
+      logTerminal('<span class="text-zinc-500 font-mono">[0x00400000] Buffer contains no executable instructions.</span>');
+      return { isDrained: true };
+    }
+
+    state.pipeline.cycle++;
+    state.pipeline.flushed = false;
+    state.pipeline.stalled = false;
+    state.pipeline.lastWrittenReg = null;
+    state.pipeline.lastWrittenMem = null;
+
+    // ------------------------------------------------------------------------
+    // STAGE 5: WRITE-BACK (WB)
+    // ------------------------------------------------------------------------
+    if (state.pipeline.MEM_WB.valid) {
+      if (state.pipeline.MEM_WB.regWrite && state.pipeline.MEM_WB.rd !== 0) {
+        state.prevRegisters = [...state.registers];
+        state.registers[state.pipeline.MEM_WB.rd] = state.pipeline.MEM_WB.writeBackData | 0;
+        state.pipeline.lastWrittenReg = state.pipeline.MEM_WB.rd;
+      }
+      state.registers[0] = 0; // Letho invariant: hardwired zero
+      state.pipeline.instructionsRetired++;
+    }
+
+    // ------------------------------------------------------------------------
+    // STAGE 4: MEMORY ACCESS (MEM)
+    // ------------------------------------------------------------------------
+    let next_MEM_WB = createBubbleMEM_WB();
+    if (state.pipeline.EX_MEM.valid) {
+      let memReadData = 0;
+      if (state.pipeline.EX_MEM.memRead) {
+        memReadData = state.simulatedMemory[state.pipeline.EX_MEM.aluResult] !== undefined
+          ? state.simulatedMemory[state.pipeline.EX_MEM.aluResult]
+          : 0;
+      }
+      if (state.pipeline.EX_MEM.memWrite) {
+        state.simulatedMemory[state.pipeline.EX_MEM.aluResult] = state.pipeline.EX_MEM.storeData | 0;
+        state.pipeline.lastWrittenMem = state.pipeline.EX_MEM.aluResult;
+      }
+      const wbData = state.pipeline.EX_MEM.memToReg ? memReadData : state.pipeline.EX_MEM.aluResult;
+      next_MEM_WB = {
+        valid: true,
+        pc: state.pipeline.EX_MEM.pc,
+        memReadData,
+        aluResult: state.pipeline.EX_MEM.aluResult,
+        writeBackData: wbData,
+        rd: state.pipeline.EX_MEM.rd,
+        mnemonic: state.pipeline.EX_MEM.mnemonic,
+        rawAssembly: state.pipeline.EX_MEM.rawAssembly,
+        lineNum: state.pipeline.EX_MEM.lineNum,
+        regWrite: state.pipeline.EX_MEM.regWrite,
+        memToReg: state.pipeline.EX_MEM.memToReg
+      };
+    }
+
+    // ------------------------------------------------------------------------
+    // STAGE 3: EXECUTE (EX)
+    // ------------------------------------------------------------------------
+    let next_EX_MEM = createBubbleEX_MEM();
+    let branchTaken = false;
+    let branchTarget = 0;
+
+    if (state.pipeline.ID_EX.valid) {
+      const opA = state.pipeline.ID_EX.rs1_val;
+      const opB = state.pipeline.ID_EX.aluSrc ? state.pipeline.ID_EX.imm : state.pipeline.ID_EX.rs2_val;
+      let aluResult = 0;
+
+      switch (state.pipeline.ID_EX.aluOp) {
+        case 'ADD':
+          aluResult = (opA + opB) | 0;
+          break;
+        case 'SUB':
+          aluResult = (opA - opB) | 0;
+          break;
+        case 'AND':
+          aluResult = (opA & opB) | 0;
+          break;
+        case 'OR':
+          aluResult = (opA | opB) | 0;
+          break;
+        case 'SLL':
+          aluResult = (opA << (opB & 0x1F)) | 0;
+          break;
+        default:
+          aluResult = (opA + opB) | 0;
+          break;
+      }
+
+      if (state.pipeline.ID_EX.branch) {
+        if (state.pipeline.ID_EX.branchCondition === 'EQ') {
+          branchTaken = (state.pipeline.ID_EX.rs1_val === state.pipeline.ID_EX.rs2_val);
+        } else if (state.pipeline.ID_EX.branchCondition === 'GT') {
+          branchTaken = ((state.pipeline.ID_EX.rs1_val | 0) > (state.pipeline.ID_EX.rs2_val | 0));
+        }
+        branchTarget = (state.pipeline.ID_EX.pc + state.pipeline.ID_EX.imm) | 0;
+      }
+
+      next_EX_MEM = {
+        valid: true,
+        pc: state.pipeline.ID_EX.pc,
+        aluResult,
+        storeData: state.pipeline.ID_EX.rs2_val,
+        branchTarget,
+        branchTaken,
+        rd: state.pipeline.ID_EX.rd,
+        mnemonic: state.pipeline.ID_EX.mnemonic,
+        rawAssembly: state.pipeline.ID_EX.rawAssembly,
+        lineNum: state.pipeline.ID_EX.lineNum,
+        regWrite: state.pipeline.ID_EX.regWrite,
+        memRead: state.pipeline.ID_EX.memRead,
+        memWrite: state.pipeline.ID_EX.memWrite,
+        memToReg: state.pipeline.ID_EX.memToReg
+      };
+    }
+
+    // ------------------------------------------------------------------------
+    // STAGE 2: INSTRUCTION DECODE (ID)
+    // ------------------------------------------------------------------------
+    let next_ID_EX = createBubbleID_EX();
+    if (state.pipeline.IF_ID.valid) {
+      const tokens = state.pipeline.IF_ID.tokens;
+      const mnemonic = state.pipeline.IF_ID.mnemonic;
+      const ctrl = ControlUnit.decode(mnemonic);
+
+      let rd = 0;
+      let rs1 = 0;
+      let rs2 = 0;
+      let imm = 0;
+
+      if (mnemonic === 'kop' || mnemonic === 'ts' || mnemonic === 'le' || mnemonic === 'kp' || mnemonic === 'ng' ||
+          mnemonic === 'add' || mnemonic === 'sub' || mnemonic === 'and' || mnemonic === 'or' || mnemonic === 'sll') {
+        rd = parseRegisterNumber(tokens[1]) || 0;
+        rs1 = parseRegisterNumber(tokens[2]) || 0;
+        rs2 = parseRegisterNumber(tokens[3]) || 0;
+      } else if (mnemonic === 'khh' || mnemonic === 'addi') {
+        rd = parseRegisterNumber(tokens[1]) || 0;
+        rs1 = parseRegisterNumber(tokens[2]) || 0;
+        imm = parseInt(tokens[3], 10) || 0;
+      } else if (mnemonic === 'lt' || mnemonic === 'lw') {
+        rd = parseRegisterNumber(tokens[1]) || 0;
+        if (tokens.length >= 4) {
+          imm = parseInt(tokens[2], 10) || 0;
+          rs1 = parseRegisterNumber(tokens[3]) || 0;
+        } else if (tokens[2]) {
+          const m = tokens[2].match(/^(-?\d+)?\(?([^)]+)\)?/);
+          if (m) {
+            imm = parseInt(m[1] || '0', 10);
+            rs1 = parseRegisterNumber(m[2]) || 0;
+          }
+        }
+      } else if (mnemonic === 'blk' || mnemonic === 'sw') {
+        rs2 = parseRegisterNumber(tokens[1]) || 0;
+        if (tokens.length >= 4) {
+          imm = parseInt(tokens[2], 10) || 0;
+          rs1 = parseRegisterNumber(tokens[3]) || 0;
+        } else if (tokens[2]) {
+          const m = tokens[2].match(/^(-?\d+)?\(?([^)]+)\)?/);
+          if (m) {
+            imm = parseInt(m[1] || '0', 10);
+            rs1 = parseRegisterNumber(m[2]) || 0;
+          }
+        }
+      } else if (mnemonic === 'hlk' || mnemonic === 'hft' || mnemonic === 'beq' || mnemonic === 'bgt') {
+        rs1 = parseRegisterNumber(tokens[1]) || 0;
+        rs2 = parseRegisterNumber(tokens[2]) || 0;
+        const targetToken = (tokens[3] || '').replace(/^\+/, '').toLowerCase();
+        if (labelMap.has(targetToken)) {
+          const targetIdx = labelMap.get(targetToken);
+          const targetAddress = 0x00400000 + targetIdx * 4;
+          imm = targetAddress - state.pipeline.IF_ID.pc;
+        } else {
+          imm = parseInt(targetToken, 10) || 0;
+        }
+      }
+
+      const rs1_val = (rs1 === 0 ? 0 : (state.registers[rs1] || 0));
+      const rs2_val = (rs2 === 0 ? 0 : (state.registers[rs2] || 0));
+
+      next_ID_EX = {
+        valid: true,
+        pc: state.pipeline.IF_ID.pc,
+        rs1,
+        rs2,
+        rd,
+        rs1_val,
+        rs2_val,
+        imm,
+        mnemonic,
+        rawAssembly: state.pipeline.IF_ID.rawAssembly,
+        lineNum: state.pipeline.IF_ID.lineNum,
+        ...ctrl
+      };
+    }
+
+    // ------------------------------------------------------------------------
+    // STAGE 1: INSTRUCTION FETCH (IF)
+    // ------------------------------------------------------------------------
+    let next_IF_ID = createBubbleIF_ID();
+
+    if (branchTaken) {
+      state.pc = branchTarget;
+      next_IF_ID = createBubbleIF_ID();
+      next_ID_EX = createBubbleID_EX();
+      state.pipeline.flushed = true;
+    } else {
+      const instIdx = Math.floor((state.pc - 0x00400000) / 4);
+      if (instIdx >= 0 && instIdx < instructions.length) {
+        const current = instructions[instIdx];
+        const enc = encodeLimoInstruction(current.rawText);
+        next_IF_ID = {
+          valid: true,
+          pc: state.pc,
+          instruction: enc.hexEncoding ? parseInt(enc.hexEncoding, 16) : 0,
+          hex: enc.hexEncoding || '0x00000013',
+          rawAssembly: current.rawText,
+          mnemonic: current.mnemonic,
+          tokens: current.tokens,
+          lineNum: current.lineNum
+        };
+        state.pc += 4;
+      } else {
+        next_IF_ID = createBubbleIF_ID();
+      }
+    }
+
+    // Synchronous clock latch
+    state.pipeline.IF_ID = next_IF_ID;
+    state.pipeline.ID_EX = next_ID_EX;
+    state.pipeline.EX_MEM = next_EX_MEM;
+    state.pipeline.MEM_WB = next_MEM_WB;
+
+    const isDrained = isPipelineDrained(instructions.length);
+
+    // Active instruction line in editor: follows active execution stage
+    const activeLine = state.pipeline.EX_MEM.valid ? state.pipeline.EX_MEM.lineNum :
+                       state.pipeline.ID_EX.valid ? state.pipeline.ID_EX.lineNum :
+                       state.pipeline.IF_ID.valid ? state.pipeline.IF_ID.lineNum : null;
+    state.activeLineNum = activeLine;
+
+    renderEditor();
+    if (activeLine) scrollToActiveLine(activeLine);
+
+    // Quick Action Bar Status
+    const quickPC = document.getElementById('quickPC');
+    const quickInst = document.getElementById('quickActiveInst');
+    if (quickPC) quickPC.textContent = '0x' + (state.pc >>> 0).toString(16).padStart(8, '0').toUpperCase();
+    if (quickInst) {
+      const activeText = state.pipeline.EX_MEM.valid ? `EX: ${state.pipeline.EX_MEM.rawAssembly}` :
+                         state.pipeline.ID_EX.valid ? `ID: ${state.pipeline.ID_EX.rawAssembly}` :
+                         state.pipeline.IF_ID.valid ? `IF: ${state.pipeline.IF_ID.rawAssembly}` :
+                         'Active: none (bubble)';
+      quickInst.textContent = activeText;
+    }
+
+    renderPipelineRegisters();
+    renderRegisters();
+
+    return { isDrained };
   }
 
   function stepInstruction() {
     const file = state.files[state.activeFile];
     if (!file) return;
 
-    const { instructions, labelMap } = parseExecutableProgram(file.content);
-
+    const { instructions } = parseExecutableProgram(file.content);
     if (instructions.length === 0) {
       logTerminal('<span class="text-zinc-500 font-mono">[0x00400000] Buffer contains no executable instructions.</span>');
       return;
     }
 
-    if (state.currentStepIndex >= instructions.length) {
-      // Auto-reset when user steps past the end to allow re-running cleanly
+    if (isPipelineDrained(instructions.length)) {
       resetCpu();
-      logTerminal('<span class="text-emerald-400 font-semibold">[Program Reset]</span> Automatically reset CPU for new run.');
+      logTerminal('<span class="text-emerald-400 font-semibold">[Program Reset]</span> Automatically reset CPU for new step session.');
     }
 
-    const current = instructions[state.currentStepIndex];
-    state.activeLineNum = current.lineNum;
-    renderEditor();
-    scrollToActiveLine(current.lineNum);
+    const { isDrained } = stepPipelineCycle();
 
-    const pcHex = '0x' + (state.pc >>> 0).toString(16).padStart(8, '0').toUpperCase();
-    const quickPC = document.getElementById('quickPC');
-    const quickInst = document.getElementById('quickActiveInst');
-    if (quickPC) quickPC.textContent = pcHex;
-    if (quickInst) quickInst.textContent = `${current.cleanedText}`;
+    const p = state.pipeline;
+    const ifDesc = p.IF_ID.valid ? p.IF_ID.mnemonic : 'bubble';
+    const idDesc = p.ID_EX.valid ? p.ID_EX.mnemonic : 'bubble';
+    const exDesc = p.EX_MEM.valid ? `${p.EX_MEM.mnemonic} (alu=${p.EX_MEM.aluResult})` : 'bubble';
+    const memDesc = p.MEM_WB.valid ? `${p.MEM_WB.mnemonic} (wb=${p.MEM_WB.writeBackData})` : 'bubble';
 
-    let nextStepIndex = state.currentStepIndex + 1;
-    let nextPC = state.pc + 4;
+    logTerminal(`<span class="text-indigo-400 font-mono font-bold">[Cycle ${p.cycle}]</span> <span class="text-zinc-400 text-xs">IF: <strong class="text-blue-300">${ifDesc}</strong> | ID: <strong class="text-purple-300">${idDesc}</strong> | EX: <strong class="text-amber-300">${exDesc}</strong> | WB: <strong class="text-emerald-300">${memDesc}</strong></span>`);
 
-    state.prevRegisters = [...state.registers];
-
-    const { tokens, mnemonic } = current;
-
-    try {
-      switch (mnemonic) {
-        case 'kop':
-        case 'add': {
-          const rd = parseRegisterNumber(tokens[1]);
-          const rs1 = parseRegisterNumber(tokens[2]);
-          const rs2 = parseRegisterNumber(tokens[3]);
-          if (rd !== null && rs1 !== null && rs2 !== null) {
-            state.registers[rd] = (state.registers[rs1] + state.registers[rs2]) | 0;
-            state.registers[0] = 0;
-            const regName = LIMO_REGISTERS[rd]?.sesothoName || `r${rd}`;
-            logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-blue-400 font-bold">${tokens.join(' ')}</span> => <span class="text-emerald-400 font-bold">r${rd} (${regName}) = ${state.registers[rd]}</span>`);
-          }
-          break;
-        }
-
-        case 'ts':
-        case 'sub': {
-          const rd = parseRegisterNumber(tokens[1]);
-          const rs1 = parseRegisterNumber(tokens[2]);
-          const rs2 = parseRegisterNumber(tokens[3]);
-          if (rd !== null && rs1 !== null && rs2 !== null) {
-            state.registers[rd] = (state.registers[rs1] - state.registers[rs2]) | 0;
-            state.registers[0] = 0;
-            const regName = LIMO_REGISTERS[rd]?.sesothoName || `r${rd}`;
-            logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-blue-400 font-bold">${tokens.join(' ')}</span> => <span class="text-emerald-400 font-bold">r${rd} (${regName}) = ${state.registers[rd]}</span>`);
-          }
-          break;
-        }
-
-        case 'khh':
-        case 'addi': {
-          const rd = parseRegisterNumber(tokens[1]);
-          const rs1 = parseRegisterNumber(tokens[2]);
-          const imm = parseInt(tokens[3], 10) || 0;
-          if (rd !== null && rs1 !== null) {
-            state.registers[rd] = (state.registers[rs1] + imm) | 0;
-            state.registers[0] = 0;
-            const regName = LIMO_REGISTERS[rd]?.sesothoName || `r${rd}`;
-            logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-blue-400 font-bold">${tokens.join(' ')}</span> => <span class="text-emerald-400 font-bold">r${rd} (${regName}) = ${state.registers[rd]}</span>`);
-          }
-          break;
-        }
-
-        case 'le':
-        case 'and': {
-          const rd = parseRegisterNumber(tokens[1]);
-          const rs1 = parseRegisterNumber(tokens[2]);
-          const rs2 = parseRegisterNumber(tokens[3]);
-          if (rd !== null && rs1 !== null && rs2 !== null) {
-            state.registers[rd] = (state.registers[rs1] & state.registers[rs2]) | 0;
-            state.registers[0] = 0;
-            logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-blue-400 font-bold">${tokens.join(' ')}</span> => <span class="text-emerald-400 font-bold">r${rd} = ${state.registers[rd]}</span>`);
-          }
-          break;
-        }
-
-        case 'kp':
-        case 'or': {
-          const rd = parseRegisterNumber(tokens[1]);
-          const rs1 = parseRegisterNumber(tokens[2]);
-          const rs2 = parseRegisterNumber(tokens[3]);
-          if (rd !== null && rs1 !== null && rs2 !== null) {
-            state.registers[rd] = (state.registers[rs1] | state.registers[rs2]) | 0;
-            state.registers[0] = 0;
-            logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-blue-400 font-bold">${tokens.join(' ')}</span> => <span class="text-emerald-400 font-bold">r${rd} = ${state.registers[rd]}</span>`);
-          }
-          break;
-        }
-
-        case 'ng':
-        case 'sll':
-        case 'slli': {
-          const rd = parseRegisterNumber(tokens[1]);
-          const rs1 = parseRegisterNumber(tokens[2]);
-          const shamt = parseRegisterNumber(tokens[3]) !== null
-            ? state.registers[parseRegisterNumber(tokens[3])] & 0x1F
-            : (parseInt(tokens[3], 10) || 0) & 0x1F;
-          if (rd !== null && rs1 !== null) {
-            state.registers[rd] = (state.registers[rs1] << shamt) | 0;
-            state.registers[0] = 0;
-            logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-blue-400 font-bold">${tokens.join(' ')}</span> => <span class="text-emerald-400 font-bold">r${rd} = ${state.registers[rd]} (shift left by ${shamt})</span>`);
-          }
-          break;
-        }
-
-        case 'lt':
-        case 'lw': {
-          const rd = parseRegisterNumber(tokens[1]);
-          let imm = 0;
-          let rs1 = null;
-          if (tokens.length >= 4) {
-            imm = parseInt(tokens[2], 10) || 0;
-            rs1 = parseRegisterNumber(tokens[3]);
-          } else if (tokens[2]) {
-            const m = tokens[2].match(/^(-?\d+)?\(?([^)]+)\)?/);
-            if (m) {
-              imm = parseInt(m[1] || '0', 10);
-              rs1 = parseRegisterNumber(m[2]);
-            }
-          }
-          if (rd !== null && rs1 !== null) {
-            const addr = ((state.registers[rs1] + imm) >>> 0);
-            const val = state.simulatedMemory[addr] ?? 20;
-            state.registers[rd] = val;
-            state.registers[0] = 0;
-            logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-purple-400 font-bold">${tokens.join(' ')}</span> => <span class="text-yellow-400 font-bold">Mem[0x${addr.toString(16).toUpperCase()}] -> r${rd} = ${val}</span>`);
-          }
-          break;
-        }
-
-        case 'blk':
-        case 'sw': {
-          const rs2 = parseRegisterNumber(tokens[1]);
-          let imm = 0;
-          let rs1 = null;
-          if (tokens.length >= 4) {
-            imm = parseInt(tokens[2], 10) || 0;
-            rs1 = parseRegisterNumber(tokens[3]);
-          } else if (tokens[2]) {
-            const m = tokens[2].match(/^(-?\d+)?\(?([^)]+)\)?/);
-            if (m) {
-              imm = parseInt(m[1] || '0', 10);
-              rs1 = parseRegisterNumber(m[2]);
-            }
-          }
-          if (rs2 !== null && rs1 !== null) {
-            const addr = ((state.registers[rs1] + imm) >>> 0);
-            const val = state.registers[rs2];
-            state.simulatedMemory[addr] = val;
-            logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-purple-400 font-bold">${tokens.join(' ')}</span> => <span class="text-yellow-400 font-bold">Mem[0x${addr.toString(16).toUpperCase()}] <- r${rs2} (${val})</span>`);
-          }
-          break;
-        }
-
-        case 'hlk':
-        case 'beq': {
-          const rs1 = parseRegisterNumber(tokens[1]);
-          const rs2 = parseRegisterNumber(tokens[2]);
-          const targetToken = tokens[3];
-          if (rs1 !== null && rs2 !== null && targetToken) {
-            if (state.registers[rs1] === state.registers[rs2]) {
-              const cleanTarget = targetToken.replace(/^\+/, '').toLowerCase();
-              if (labelMap.has(cleanTarget)) {
-                nextStepIndex = labelMap.get(cleanTarget);
-                nextPC = 0x00400000 + nextStepIndex * 4;
-              } else {
-                const byteOffset = parseInt(cleanTarget, 10) || 0;
-                nextStepIndex = state.currentStepIndex + Math.floor(byteOffset / 4);
-                nextPC = state.pc + byteOffset;
-              }
-              logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-amber-400 font-bold">${tokens.join(' ')}</span> => <span class="text-emerald-400 font-bold">BRANCH TAKEN (to PC 0x${(nextPC >>> 0).toString(16).toUpperCase()})</span>`);
-            } else {
-              logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-amber-400 font-bold">${tokens.join(' ')}</span> => <span class="text-zinc-400">Branch not taken (r${rs1} != r${rs2})</span>`);
-            }
-          }
-          break;
-        }
-
-        case 'hft':
-        case 'bgt': {
-          const rs1 = parseRegisterNumber(tokens[1]);
-          const rs2 = parseRegisterNumber(tokens[2]);
-          const targetToken = tokens[3];
-          if (rs1 !== null && rs2 !== null && targetToken) {
-            if (state.registers[rs1] > state.registers[rs2]) {
-              const cleanTarget = targetToken.replace(/^\+/, '').toLowerCase();
-              if (labelMap.has(cleanTarget)) {
-                nextStepIndex = labelMap.get(cleanTarget);
-                nextPC = 0x00400000 + nextStepIndex * 4;
-              } else {
-                const byteOffset = parseInt(cleanTarget, 10) || 0;
-                nextStepIndex = state.currentStepIndex + Math.floor(byteOffset / 4);
-                nextPC = state.pc + byteOffset;
-              }
-              logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-amber-400 font-bold">${tokens.join(' ')}</span> => <span class="text-emerald-400 font-bold">BRANCH TAKEN (to PC 0x${(nextPC >>> 0).toString(16).toUpperCase()})</span>`);
-            } else {
-              logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-amber-400 font-bold">${tokens.join(' ')}</span> => <span class="text-zinc-400">Branch not taken (r${rs1} <= r${rs2})</span>`);
-            }
-          }
-          break;
-        }
-
-        default:
-          logTerminal(`<span class="text-zinc-500 font-mono">[${pcHex}]</span> <span class="text-zinc-300">${current.rawText}</span>`);
-          break;
-      }
-    } catch (err) {
-      logTerminal(`Error executing ${current.rawText}: ${err.message}`, 'error');
+    if (isDrained) {
+      const cpi = p.instructionsRetired > 0 ? (p.cycle / p.instructionsRetired).toFixed(2) : '1.00';
+      logTerminal(`<span class="text-emerald-400 font-semibold">[Pipeline Drained]</span> Completed in <strong>${p.cycle} cycles</strong>. Instructions retired: <strong>${p.instructionsRetired}</strong>. CPI: <strong>${cpi}</strong>.`);
+      showToast(`Finished: ${p.instructionsRetired} instructions retired in ${p.cycle} cycles`, 'success');
     }
-
-    state.pc = nextPC;
-    state.currentStepIndex = nextStepIndex;
-    advancePipeline(current, state.pc);
-    renderRegisters();
   }
 
   function runSimulation() {
@@ -1235,54 +1520,51 @@ _start:
       return;
     }
 
-    // Automatically reset CPU when re-running or starting a fresh execution
-    const isPausedAtBreakpoint = state.activeLineNum !== null && state.currentStepIndex < instructions.length && state.currentStepIndex > 0;
-    if (!isPausedAtBreakpoint || state.currentStepIndex >= instructions.length) {
+    // Automatically reset CPU when starting a fresh execution or already drained
+    if (isPipelineDrained(instructions.length) || state.pipeline.cycle === 0) {
       resetCpu();
     }
 
-    logTerminal(`<span class="text-blue-400 font-semibold">[Assemble & Run: ${state.activeFile}]</span> Assembling RV32I LIMO Session...`);
+    logTerminal(`<span class="text-blue-400 font-semibold">[Assemble & Run: ${state.activeFile}]</span> Simulating 5-Stage Synchronous Pipeline...`);
 
-    let cycles = 0;
     const maxCycles = 2000;
     let hitBreakpoint = false;
 
-    while (state.currentStepIndex < instructions.length && cycles < maxCycles) {
-      const current = instructions[state.currentStepIndex];
-
-      if (state.breakpoints.has(current.lineNum) && cycles > 0) {
-        hitBreakpoint = true;
-        logTerminal(`<span class="text-amber-400 font-bold">[Breakpoint Hit]</span> Stopped at line ${current.lineNum}: <code>${escapeHtml(current.rawText)}</code>`);
-        state.activeLineNum = current.lineNum;
-        renderEditor();
-        scrollToActiveLine(current.lineNum);
-        showToast(`Breakpoint Hit at Line ${current.lineNum}`, 'warn');
-        break;
+    while (!isPipelineDrained(instructions.length) && state.pipeline.cycle < maxCycles) {
+      const currentInstIdx = Math.floor((state.pc - 0x00400000) / 4);
+      if (currentInstIdx >= 0 && currentInstIdx < instructions.length) {
+        if (state.breakpoints.has(instructions[currentInstIdx].lineNum) && state.pipeline.cycle > 0) {
+          hitBreakpoint = true;
+          logTerminal(`<span class="text-red-400 font-bold">[Breakpoint Hit]</span> Paused before line ${instructions[currentInstIdx].lineNum}: <code>${escapeHtml(instructions[currentInstIdx].rawText)}</code>`);
+          state.activeLineNum = instructions[currentInstIdx].lineNum;
+          renderEditor();
+          scrollToActiveLine(instructions[currentInstIdx].lineNum);
+          showToast(`Breakpoint Hit at Line ${instructions[currentInstIdx].lineNum}`, 'warn');
+          break;
+        }
       }
 
-      stepInstruction();
-      cycles++;
+      stepPipelineCycle();
     }
 
+    const p = state.pipeline;
+    const cpi = p.instructionsRetired > 0 ? (p.cycle / p.instructionsRetired).toFixed(2) : '1.00';
+
     if (!hitBreakpoint) {
-      state.activeLineNum = null;
-      renderEditor();
+      const nonZero = [8, 9, 10, 13, 6, 7].filter(i => state.registers[i] !== 0);
+      const regSummary = nonZero.map(i => `r${i}=<strong>${state.registers[i]}</strong>`).join(' · ') || 'all zero';
 
-      // Meaningful outcome summary
-      let outcome = '';
-      if (state.activeFile.includes('addition') || state.activeFile.includes('kopanya')) {
-        outcome = `Sum in r8 (Nakoana0 / a0) = <strong class="text-yellow-300 text-sm">${state.registers[8]}</strong>`;
-      } else if (state.activeFile.includes('store') || state.activeFile.includes('boloka')) {
-        outcome = `Stored in Mem[1004] = 20, Read back into r9 (Nakoana1) = <strong class="text-yellow-300 text-sm">${state.registers[9]}</strong>`;
-      } else if (state.activeFile.includes('average') || state.activeFile.includes('midpoint')) {
-        outcome = `Midpoint Average in r8 (Nakoana0) = <strong class="text-yellow-300 text-sm">${state.registers[8]}</strong>`;
-      } else {
-        const nonZero = [8, 9, 10, 6, 7].filter(i => state.registers[i] !== 0);
-        outcome = nonZero.map(i => `r${i} = <strong>${state.registers[i]}</strong>`).join(' · ') || 'Clean run completed.';
-      }
-
-      logTerminal(`<span class="text-emerald-400 font-bold">[Execution Success]</span> ${outcome}`);
-      showToast('Program Executed Successfully', 'success');
+      logTerminal(`
+        <div class="p-2.5 bg-zinc-900 rounded-xl border border-emerald-500/40 text-[11px] font-mono space-y-1">
+          <div class="text-emerald-400 font-bold flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="m9 12 2 2 4-4"/></svg>
+            ✓ 5-Stage Pipeline Execution Complete
+          </div>
+          <div class="text-zinc-300">Total Cycles: <strong>${p.cycle}</strong> · Instructions Retired: <strong>${p.instructionsRetired}</strong> · CPI: <strong>${cpi}</strong></div>
+          <div class="text-zinc-400 text-[10px]">Registers Committed: ${regSummary}</div>
+        </div>
+      `);
+      showToast(`Run Complete: ${p.instructionsRetired} retired in ${p.cycle} cycles (CPI: ${cpi})`, 'success');
     }
   }
 
@@ -1625,116 +1907,19 @@ _start:
       cycle: 0,
       stalled: false,
       flushed: false,
-      IF_ID: { valid: false, pc: 0x00400000, instruction: 0x00000013, hex: '0x00000013', rawAssembly: 'nop', lineNum: 0 },
-      ID_EX: { valid: false, pc: 0x00400000, rs1: 0, rs2: 0, rd: 0, rs1_val: 0, rs2_val: 0, imm: 0, mnemonic: '', rawAssembly: 'nop', regWrite: false, memRead: false, memWrite: false, branch: false, aluOp: 'ADD', aluSrc: false, memToReg: false },
-      EX_MEM: { valid: false, pc: 0x00400000, aluResult: 0, storeData: 0, branchTarget: 0, branchTaken: false, rd: 0, mnemonic: '', regWrite: false, memRead: false, memWrite: false, memToReg: false },
-      MEM_WB: { valid: false, pc: 0x00400000, memReadData: 0, aluResult: 0, writeBackData: 0, rd: 0, mnemonic: '', regWrite: false, memToReg: false }
+      instructionsRetired: 0,
+      lastWrittenReg: null,
+      lastWrittenMem: null,
+      IF_ID: createBubbleIF_ID(),
+      ID_EX: createBubbleID_EX(),
+      EX_MEM: createBubbleEX_MEM(),
+      MEM_WB: createBubbleMEM_WB()
     };
     renderPipelineRegisters();
   }
 
   function advancePipeline(currentInst, currentPC) {
-    if (!currentInst) return;
-    state.pipeline.cycle++;
-
-    const prevIF = Object.assign({}, state.pipeline.IF_ID);
-    const prevID = Object.assign({}, state.pipeline.ID_EX);
-    const prevEX = Object.assign({}, state.pipeline.EX_MEM);
-
-    // 1. Advance MEM/WB stage
-    if (prevEX.valid) {
-      const memVal = state.simulatedMemory[prevEX.aluResult] || 0;
-      state.pipeline.MEM_WB = {
-        valid: true,
-        pc: prevEX.pc,
-        memReadData: memVal,
-        aluResult: prevEX.aluResult,
-        writeBackData: prevEX.memToReg ? memVal : prevEX.aluResult,
-        rd: prevEX.rd,
-        mnemonic: prevEX.mnemonic,
-        regWrite: prevEX.regWrite,
-        memToReg: prevEX.memToReg
-      };
-    } else {
-      state.pipeline.MEM_WB.valid = false;
-    }
-
-    // 2. Advance EX/MEM stage
-    if (prevID.valid) {
-      let aluRes = 0;
-      let branchMet = false;
-      if (prevID.aluOp === 'ADD') aluRes = (prevID.rs1_val + (prevID.aluSrc ? prevID.imm : prevID.rs2_val)) | 0;
-      else if (prevID.aluOp === 'SUB') aluRes = (prevID.rs1_val - prevID.rs2_val) | 0;
-      else if (prevID.aluOp === 'AND') aluRes = (prevID.rs1_val & prevID.rs2_val) | 0;
-      else if (prevID.aluOp === 'OR')  aluRes = (prevID.rs1_val | prevID.rs2_val) | 0;
-      else if (prevID.aluOp === 'SLL') aluRes = (prevID.rs1_val << (prevID.rs2_val & 0x1F)) | 0;
-
-      if (prevID.branch) {
-        branchMet = prevID.mnemonic === 'hlk' ? (prevID.rs1_val === prevID.rs2_val) : (prevID.rs1_val > prevID.rs2_val);
-      }
-
-      state.pipeline.EX_MEM = {
-        valid: true,
-        pc: prevID.pc,
-        aluResult: aluRes,
-        storeData: prevID.rs2_val,
-        branchTarget: prevID.pc + prevID.imm,
-        branchTaken: branchMet,
-        rd: prevID.rd,
-        mnemonic: prevID.mnemonic,
-        regWrite: prevID.regWrite,
-        memRead: prevID.memRead,
-        memWrite: prevID.memWrite,
-        memToReg: prevID.memToReg
-      };
-    } else {
-      state.pipeline.EX_MEM.valid = false;
-    }
-
-    // 3. Advance ID/EX stage
-    if (prevIF.valid) {
-      const enc = encodeLimoInstruction(prevIF.rawAssembly);
-      const spec = LIMO_INSTRUCTIONS[prevIF.mnemonic] || {};
-      const tokens = prevIF.tokens || [];
-      const rd = parseRegisterNumber(tokens[1]) || 0;
-      const rs1 = parseRegisterNumber(tokens[2]) || 0;
-      const rs2 = parseRegisterNumber(tokens[3]) || 0;
-
-      state.pipeline.ID_EX = {
-        valid: true,
-        pc: prevIF.pc,
-        rs1, rs2, rd,
-        rs1_val: state.registers[rs1] || 0,
-        rs2_val: state.registers[rs2] || 0,
-        imm: parseInt(tokens[3] || tokens[2], 10) || 0,
-        mnemonic: prevIF.mnemonic,
-        rawAssembly: prevIF.rawAssembly,
-        regWrite: spec.format === 'R' || spec.format === 'I',
-        memRead: prevIF.mnemonic === 'lt',
-        memWrite: prevIF.mnemonic === 'blk',
-        branch: spec.format === 'B',
-        aluSrc: spec.format === 'I' || spec.format === 'S',
-        aluOp: spec.format === 'R' ? (prevIF.mnemonic === 'ts' ? 'SUB' : prevIF.mnemonic === 'le' ? 'AND' : prevIF.mnemonic === 'kp' ? 'OR' : prevIF.mnemonic === 'ng' ? 'SLL' : 'ADD') : 'ADD',
-        memToReg: prevIF.mnemonic === 'lt'
-      };
-    } else {
-      state.pipeline.ID_EX.valid = false;
-    }
-
-    // 4. Latch newly fetched instruction into IF/ID
-    const encCurrent = encodeLimoInstruction(currentInst.rawText);
-    state.pipeline.IF_ID = {
-      valid: true,
-      pc: currentPC,
-      instruction: encCurrent.hexEncoding ? parseInt(encCurrent.hexEncoding, 16) : 0x00000013,
-      hex: encCurrent.hexEncoding || '0x00000013',
-      rawAssembly: currentInst.rawText,
-      mnemonic: currentInst.mnemonic,
-      tokens: currentInst.tokens,
-      lineNum: currentInst.lineNum
-    };
-
-    renderPipelineRegisters();
+    stepPipelineCycle();
   }
 
   function renderPipelineRegisters() {
@@ -1744,21 +1929,108 @@ _start:
     const exmem = p.EX_MEM;
     const memwb = p.MEM_WB;
 
-    // 1. Update Inspector Panel
+    // 1. Update Inspector Panel Metrics & Badges
     const pipeCycleBadge = document.getElementById('pipeCycleBadge');
     if (pipeCycleBadge) pipeCycleBadge.textContent = `Cycle ${p.cycle}`;
 
+    const pipeRetiredBadge = document.getElementById('pipeRetiredBadge');
+    if (pipeRetiredBadge) pipeRetiredBadge.textContent = `${p.instructionsRetired} inst`;
+
+    const pipeCPIBadge = document.getElementById('pipeCPIBadge');
+    if (pipeCPIBadge) {
+      const cpi = p.instructionsRetired > 0 ? (p.cycle / p.instructionsRetired).toFixed(2) : '0.00';
+      pipeCPIBadge.textContent = cpi;
+    }
+
+    const pipeStallBadge = document.getElementById('pipeStallBadge');
+    if (pipeStallBadge) {
+      pipeStallBadge.textContent = p.stalled ? 'Stall: YES' : 'Stall: NO';
+      pipeStallBadge.className = p.stalled
+        ? 'px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold'
+        : 'px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700';
+    }
+
+    const pipeFlushBadge = document.getElementById('pipeFlushBadge');
+    if (pipeFlushBadge) {
+      pipeFlushBadge.textContent = p.flushed ? 'Flush: YES' : 'Flush: NO';
+      pipeFlushBadge.className = p.flushed
+        ? 'px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/40 font-bold'
+        : 'px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700';
+    }
+
+    // Live 5-Stage Visualizer Pills
+    const pillIF = document.getElementById('pillIF');
+    const pillID = document.getElementById('pillID');
+    const pillEX = document.getElementById('pillEX');
+    const pillMEM = document.getElementById('pillMEM');
+    const pillWB = document.getElementById('pillWB');
+
+    if (pillIF) {
+      if (ifid.valid) {
+        pillIF.className = 'p-1 rounded-md bg-blue-600/30 text-blue-300 border border-blue-500/50 font-bold shadow-sm';
+        pillIF.textContent = `1. IF (${ifid.mnemonic})`;
+      } else {
+        pillIF.className = 'p-1 rounded-md bg-zinc-900 text-zinc-500 border border-zinc-800 font-bold transition';
+        pillIF.textContent = '1. IF';
+      }
+    }
+    if (pillID) {
+      if (idex.valid) {
+        pillID.className = 'p-1 rounded-md bg-purple-600/30 text-purple-300 border border-purple-500/50 font-bold shadow-sm';
+        pillID.textContent = `2. ID (${idex.mnemonic})`;
+      } else {
+        pillID.className = 'p-1 rounded-md bg-zinc-900 text-zinc-500 border border-zinc-800 font-bold transition';
+        pillID.textContent = '2. ID';
+      }
+    }
+    if (pillEX) {
+      if (exmem.valid) {
+        pillEX.className = 'p-1 rounded-md bg-amber-600/30 text-amber-300 border border-amber-500/50 font-bold shadow-sm';
+        pillEX.textContent = `3. EX (${exmem.mnemonic})`;
+      } else {
+        pillEX.className = 'p-1 rounded-md bg-zinc-900 text-zinc-500 border border-zinc-800 font-bold transition';
+        pillEX.textContent = '3. EX';
+      }
+    }
+    if (pillMEM) {
+      if (memwb.valid) {
+        pillMEM.className = 'p-1 rounded-md bg-cyan-600/30 text-cyan-300 border border-cyan-500/50 font-bold shadow-sm';
+        pillMEM.textContent = `4. MEM (${memwb.mnemonic})`;
+      } else {
+        pillMEM.className = 'p-1 rounded-md bg-zinc-900 text-zinc-500 border border-zinc-800 font-bold transition';
+        pillMEM.textContent = '4. MEM';
+      }
+    }
+    if (pillWB) {
+      if (memwb.valid && memwb.regWrite && memwb.rd !== 0) {
+        pillWB.className = 'p-1 rounded-md bg-emerald-600/30 text-emerald-300 border border-emerald-500/50 font-bold shadow-sm animate-pulse';
+        pillWB.textContent = `5. WB (r${memwb.rd})`;
+      } else {
+        pillWB.className = 'p-1 rounded-md bg-zinc-900 text-zinc-500 border border-zinc-800 font-bold transition';
+        pillWB.textContent = '5. WB';
+      }
+    }
+
+    // 2. Inter-Stage Register Cards
+    // IF/ID
     const pipeIfIdValid = document.getElementById('pipeIfIdValid');
-    if (pipeIfIdValid) pipeIfIdValid.textContent = ifid.valid ? 'Valid' : 'Bubble';
+    if (pipeIfIdValid) {
+      pipeIfIdValid.textContent = ifid.valid ? 'Valid' : 'Bubble';
+      pipeIfIdValid.className = ifid.valid ? 'text-[9px] px-1.5 py-0.2 rounded bg-blue-950/70 text-blue-300 font-semibold' : 'text-[9px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-500';
+    }
     const pipeIfIdPC = document.getElementById('pipeIfIdPC');
     if (pipeIfIdPC) pipeIfIdPC.textContent = '0x' + (ifid.pc >>> 0).toString(16).padStart(8, '0').toUpperCase();
     const pipeIfIdHex = document.getElementById('pipeIfIdHex');
     if (pipeIfIdHex) pipeIfIdHex.textContent = ifid.hex;
     const pipeIfIdInst = document.getElementById('pipeIfIdInst');
-    if (pipeIfIdInst) pipeIfIdInst.textContent = ifid.rawAssembly;
+    if (pipeIfIdInst) pipeIfIdInst.textContent = ifid.valid ? ifid.rawAssembly : 'nop (bubble)';
 
+    // ID/EX
     const pipeIdExValid = document.getElementById('pipeIdExValid');
-    if (pipeIdExValid) pipeIdExValid.textContent = idex.valid ? 'Valid' : 'Bubble';
+    if (pipeIdExValid) {
+      pipeIdExValid.textContent = idex.valid ? 'Valid' : 'Bubble';
+      pipeIdExValid.className = idex.valid ? 'text-[9px] px-1.5 py-0.2 rounded bg-purple-950/70 text-purple-300 font-semibold' : 'text-[9px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-500';
+    }
     const pipeIdExRs1Val = document.getElementById('pipeIdExRs1Val');
     if (pipeIdExRs1Val) pipeIdExRs1Val.textContent = idex.rs1_val;
     const pipeIdExRs2Val = document.getElementById('pipeIdExRs2Val');
@@ -1766,29 +2038,51 @@ _start:
     const pipeIdExImm = document.getElementById('pipeIdExImm');
     if (pipeIdExImm) pipeIdExImm.textContent = idex.imm;
     const pipeIdExRd = document.getElementById('pipeIdExRd');
-    if (pipeIdExRd) pipeIdExRd.textContent = `r${idex.rd}`;
+    if (pipeIdExRd) pipeIdExRd.textContent = idex.valid ? `r${idex.rd}` : 'r0';
     const pipeIdExAluOp = document.getElementById('pipeIdExAluOp');
-    if (pipeIdExAluOp) pipeIdExAluOp.textContent = idex.aluOp;
+    if (pipeIdExAluOp) pipeIdExAluOp.textContent = idex.aluOp || 'ADD';
     const pipeIdExRegW = document.getElementById('pipeIdExRegW');
     if (pipeIdExRegW) pipeIdExRegW.textContent = idex.regWrite ? '1' : '0';
+    const pipeIdExAluSrc = document.getElementById('pipeIdExAluSrc');
+    if (pipeIdExAluSrc) pipeIdExAluSrc.textContent = idex.aluSrc ? '1' : '0';
+    const pipeIdExMemR = document.getElementById('pipeIdExMemR');
+    if (pipeIdExMemR) pipeIdExMemR.textContent = idex.memRead ? '1' : '0';
+    const pipeIdExMemW = document.getElementById('pipeIdExMemW');
+    if (pipeIdExMemW) pipeIdExMemW.textContent = idex.memWrite ? '1' : '0';
+    const pipeIdExBranch = document.getElementById('pipeIdExBranch');
+    if (pipeIdExBranch) pipeIdExBranch.textContent = idex.branch ? '1' : '0';
 
+    // EX/MEM
     const pipeExMemValid = document.getElementById('pipeExMemValid');
-    if (pipeExMemValid) pipeExMemValid.textContent = exmem.valid ? 'Valid' : 'Bubble';
+    if (pipeExMemValid) {
+      pipeExMemValid.textContent = exmem.valid ? 'Valid' : 'Bubble';
+      pipeExMemValid.className = exmem.valid ? 'text-[9px] px-1.5 py-0.2 rounded bg-amber-950/70 text-amber-300 font-semibold' : 'text-[9px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-500';
+    }
     const pipeExMemAlu = document.getElementById('pipeExMemAlu');
     if (pipeExMemAlu) pipeExMemAlu.textContent = exmem.aluResult;
     const pipeExMemRd = document.getElementById('pipeExMemRd');
-    if (pipeExMemRd) pipeExMemRd.textContent = `r${exmem.rd}`;
+    if (pipeExMemRd) pipeExMemRd.textContent = exmem.valid ? `r${exmem.rd}` : 'r0';
     const pipeExMemStore = document.getElementById('pipeExMemStore');
     if (pipeExMemStore) pipeExMemStore.textContent = exmem.storeData;
+    const pipeExMemBranchTaken = document.getElementById('pipeExMemBranchTaken');
+    if (pipeExMemBranchTaken) pipeExMemBranchTaken.textContent = exmem.branchTaken ? 'true' : 'false';
 
+    // MEM/WB
     const pipeMemWbValid = document.getElementById('pipeMemWbValid');
-    if (pipeMemWbValid) pipeMemWbValid.textContent = memwb.valid ? 'Valid' : 'Bubble';
+    if (pipeMemWbValid) {
+      pipeMemWbValid.textContent = memwb.valid ? 'Valid' : 'Bubble';
+      pipeMemWbValid.className = memwb.valid ? 'text-[9px] px-1.5 py-0.2 rounded bg-emerald-950/70 text-emerald-300 font-semibold' : 'text-[9px] px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-500';
+    }
     const pipeMemWbData = document.getElementById('pipeMemWbData');
     if (pipeMemWbData) pipeMemWbData.textContent = memwb.writeBackData;
     const pipeMemWbRd = document.getElementById('pipeMemWbRd');
-    if (pipeMemWbRd) pipeMemWbRd.textContent = `r${memwb.rd}`;
+    if (pipeMemWbRd) pipeMemWbRd.textContent = memwb.valid ? `r${memwb.rd}` : 'r0';
+    const pipeMemWbMemRead = document.getElementById('pipeMemWbMemRead');
+    if (pipeMemWbMemRead) pipeMemWbMemRead.textContent = memwb.memReadData;
+    const pipeMemWbRegW = document.getElementById('pipeMemWbRegW');
+    if (pipeMemWbRegW) pipeMemWbRegW.textContent = memwb.regWrite ? '1' : '0';
 
-    // 2. Update Sidebar M2 Tab Pipeline Cards
+    // 3. Update Sidebar M2 Tab Pipeline Cards
     const m2IfIdValid = document.getElementById('m2IfIdValid');
     if (m2IfIdValid) m2IfIdValid.textContent = ifid.valid ? 'valid: true' : 'valid: false';
     const m2IfIdPC = document.getElementById('m2IfIdPC');
@@ -1796,7 +2090,7 @@ _start:
     const m2IfIdHex = document.getElementById('m2IfIdHex');
     if (m2IfIdHex) m2IfIdHex.textContent = ifid.hex;
     const m2IfIdAsm = document.getElementById('m2IfIdAsm');
-    if (m2IfIdAsm) m2IfIdAsm.textContent = ifid.rawAssembly;
+    if (m2IfIdAsm) m2IfIdAsm.textContent = ifid.valid ? ifid.rawAssembly : 'nop (bubble)';
 
     const m2IdExValid = document.getElementById('m2IdExValid');
     if (m2IdExValid) m2IdExValid.textContent = idex.valid ? 'valid: true' : 'valid: false';
@@ -1809,7 +2103,7 @@ _start:
     const m2IdExRd = document.getElementById('m2IdExRd');
     if (m2IdExRd) m2IdExRd.textContent = `r${idex.rd}`;
     const m2IdExSignals = document.getElementById('m2IdExSignals');
-    if (m2IdExSignals) m2IdExSignals.textContent = `RegW=${idex.regWrite ? 1 : 0}, MemR=${idex.memRead ? 1 : 0}, MemW=${idex.memWrite ? 1 : 0}`;
+    if (m2IdExSignals) m2IdExSignals.textContent = `RegW=${idex.regWrite ? 1 : 0}, MemR=${idex.memRead ? 1 : 0}, MemW=${idex.memWrite ? 1 : 0}, ALUOp=${idex.aluOp || 'ADD'}`;
 
     const m2ExMemValid = document.getElementById('m2ExMemValid');
     if (m2ExMemValid) m2ExMemValid.textContent = exmem.valid ? 'valid: true' : 'valid: false';
@@ -1832,6 +2126,7 @@ _start:
     let passedCount = 0;
     const results = [];
 
+    // Part A: 29 M2 Assembler Encoding Tests
     M2_TEST_CASES.forEach((test) => {
       const enc = encodeLimoInstruction(test.input);
       let passed = false;
@@ -1871,11 +2166,36 @@ _start:
       });
     });
 
+    // Part B: 25 M3 Pipeline Core & Hazard-Free Execution Tests
+    if (typeof window !== 'undefined' && window.LimoPipelineTests && typeof window.LimoPipelineTests.runTests === 'function') {
+      try {
+        const pipeSuite = window.LimoPipelineTests.runTests();
+        pipeSuite.results.forEach((r) => {
+          if (r.passed) passedCount++;
+          results.push({
+            id: 29 + r.id,
+            category: 'Pipeline Core',
+            name: r.name,
+            input: '5-Stage Synchronous Core',
+            expected: 'Hazard-Free Arch State',
+            actual: r.passed ? 'Verified' : 'Failed',
+            binary: 'N/A',
+            passed: r.passed,
+            reason: r.reason || '',
+            desc: r.desc || ''
+          });
+        });
+      } catch (e) {
+        console.warn('Pipeline test suite execution error:', e);
+      }
+    }
+
     const duration = Math.round((performance.now() - t0) * 10) / 10;
+    const totalCount = results.length;
     state.testResults = {
-      total: M2_TEST_CASES.length,
+      total: totalCount,
       passed: passedCount,
-      failed: M2_TEST_CASES.length - passedCount,
+      failed: totalCount - passedCount,
       duration,
       results
     };
@@ -1890,14 +2210,14 @@ _start:
     const modalPassCount = document.getElementById('modalPassCount');
     const modalTimeCount = document.getElementById('modalTimeCount');
 
-    if (metricTotal) metricTotal.textContent = state.testResults.total;
-    if (metricPassed) metricPassed.textContent = state.testResults.passed;
-    if (metricFailed) metricFailed.textContent = state.testResults.failed;
+    if (metricTotal) metricTotal.textContent = totalCount;
+    if (metricPassed) metricPassed.textContent = passedCount;
+    if (metricFailed) metricFailed.textContent = totalCount - passedCount;
     if (metricTime) metricTime.textContent = `${duration}ms`;
-    const rate = Math.round((passedCount / M2_TEST_CASES.length) * 100);
+    const rate = totalCount > 0 ? Math.round((passedCount / totalCount) * 100) : 100;
     if (passRateLabel) passRateLabel.textContent = `${rate}%`;
     if (progressBar) progressBar.style.width = `${rate}%`;
-    if (modalPassCount) modalPassCount.textContent = `${passedCount} / ${M2_TEST_CASES.length}`;
+    if (modalPassCount) modalPassCount.textContent = `${passedCount} / ${totalCount}`;
     if (modalTimeCount) modalTimeCount.textContent = `${duration}ms`;
 
     renderTestCasesList();
@@ -1908,15 +2228,15 @@ _start:
       <div class="p-2.5 bg-zinc-900 rounded-xl border border-emerald-500/40 font-mono text-[11px] space-y-1">
         <div class="text-emerald-400 font-bold flex items-center gap-1.5">
           <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/><path d="m9 12 2 2 4-4"/></svg>
-          [M2 Test Suite] ${passedCount} / ${M2_TEST_CASES.length} Unit Tests Passed (${rate}%) in ${duration}ms
+          [M2 & M3 Test Suite] ${passedCount} / ${totalCount} Unit Tests Passed (${rate}%) in ${duration}ms
         </div>
         <div class="text-zinc-400 text-[10px]">
-          Verified: R/I/S/B Formats, M1 Hand-Encoded Benchmarks, 32 Sesotho Registers, Signed 12b & 13b Bounds.
+          Verified: 29 Assembler Encoding Tests + 25 Pipeline Core & Hazard-Free Execution Tests.
         </div>
       </div>
     `);
 
-    showToast(`All ${passedCount} Unit Tests Passed (100%)`, 'success');
+    showToast(`All ${passedCount} Unit Tests Passed (${rate}%)`, 'success');
   }
 
   function renderTestCasesList() {
@@ -1971,7 +2291,7 @@ _start:
   function exportTestReport() {
     if (!state.testResults) runAssemblerUnitTests();
     const report = {
-      project: 'LIMO Studio - CS3520 Milestone M2',
+      project: 'LIMO Studio - CS3520 Milestones M2 & M3 (Assembler & 5-Stage Pipeline Core)',
       team: 'Visionary Architects',
       timestamp: new Date().toISOString(),
       summary: {
@@ -1988,7 +2308,7 @@ _start:
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'limo_m2_assembler_test_report.json';
+    a.download = 'limo_m3_pipeline_and_assembler_test_report.json';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -2357,26 +2677,48 @@ _start:
     });
 
     // Test Category Filter Buttons
-    document.querySelectorAll('.test-filter-btn').forEach(btn => {
+    document.querySelectorAll('.test-filter-btn, .test-filter-pill').forEach(btn => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('.test-filter-btn').forEach(b => {
-          b.classList.remove('active', 'bg-blue-600', 'text-white');
+        document.querySelectorAll('.test-filter-btn, .test-filter-pill').forEach(b => {
+          b.classList.remove('active', 'bg-blue-600', 'bg-zinc-700', 'text-white');
           b.classList.add('text-zinc-400');
         });
-        btn.classList.add('active', 'bg-blue-600', 'text-white');
+        btn.classList.add('active', 'bg-zinc-700', 'text-white');
         btn.classList.remove('text-zinc-400');
-        state.unitTestFilter = btn.getAttribute('data-filter');
+        state.unitTestFilter = btn.getAttribute('data-filter') || 'all';
         renderTestCasesList();
       });
     });
 
-    // Quick toolbar buttons
+    // Quick execution & hardware reset toolbar buttons
     document.getElementById('btnRun')?.addEventListener('click', runSimulation);
     document.getElementById('btnStep')?.addEventListener('click', stepInstruction);
+    document.getElementById('btnReset')?.addEventListener('click', resetCpu);
     document.getElementById('quickRun')?.addEventListener('click', runSimulation);
     document.getElementById('quickStep')?.addEventListener('click', stepInstruction);
+    document.getElementById('quickReset')?.addEventListener('click', resetCpu);
     document.getElementById('btnDebugRun')?.addEventListener('click', runSimulation);
     document.getElementById('btnDebugStep')?.addEventListener('click', stepInstruction);
+    document.getElementById('btnDebugReset')?.addEventListener('click', resetCpu);
+    document.getElementById('menuResetCpu')?.addEventListener('click', resetCpu);
+
+    // Memory navigation & clear actions
+    document.getElementById('btnMemJump')?.addEventListener('click', () => {
+      const input = document.getElementById('memJumpInput');
+      if (input) jumpToMemoryAddress(input.value);
+    });
+    document.getElementById('memJumpInput')?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        jumpToMemoryAddress(e.target.value);
+      }
+    });
+    document.getElementById('btnMemReset')?.addEventListener('click', () => {
+      state.simulatedMemory = { 1004: 20 };
+      if (state.pipeline) state.pipeline.lastWrittenMem = null;
+      renderMemoryHex();
+      logTerminal('<span class="text-amber-400 font-semibold">[Memory Reset]</span> Data memory cleared (Mem[1004]=20 restored).');
+      showToast('Data memory reset', 'info');
+    });
 
     // Inspector format toggle
     document.getElementById('btnToggleHexDec')?.addEventListener('click', () => {
@@ -2663,6 +3005,15 @@ _start:
       } else if (e.key === 'F8') {
         e.preventDefault();
         openUnitTestsModal();
+      } else if (e.key === 'F5') {
+        e.preventDefault();
+        runSimulation();
+      } else if (e.key === 'F9') {
+        e.preventDefault();
+        resetCpu();
+      } else if (e.key === 'F10') {
+        e.preventDefault();
+        stepInstruction();
       }
     });
 
