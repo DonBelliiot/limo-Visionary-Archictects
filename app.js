@@ -442,6 +442,7 @@ _start:
       hazard: null,           // RAW hazard visible this cycle (UI warning only; M3 has no forwarding)
       rawHazards: 0,
       chart: { rows: [], flushCycles: [] },
+
       IF_ID: createBubbleIF_ID(),
       ID_EX: createBubbleID_EX(),
       EX_MEM: createBubbleEX_MEM(),
@@ -1066,6 +1067,35 @@ _start:
     if (row && row.scrollIntoView) row.scrollIntoView({ block: 'center' });
     logTerminal(`<span class="text-blue-400 font-mono font-semibold">[Memory View]</span> Showing 8 words from <strong>0x${alignedAddr.toString(16).padStart(8, '0').toUpperCase()}</strong> (${alignedAddr}).`);
     showToast(`Viewing 0x${alignedAddr.toString(16).padStart(8, '0').toUpperCase()}`, 'info');
+
+  }
+
+  function jumpToMemoryAddress(rawInput) {
+    if (!rawInput && rawInput !== 0) return;
+    const str = String(rawInput).trim();
+    if (!str) return;
+
+    let addr = 0;
+    if (str.startsWith('0x') || str.startsWith('0X')) {
+      addr = parseInt(str, 16);
+    } else {
+      addr = parseInt(str, 10);
+    }
+
+    if (isNaN(addr)) {
+      showToast(`Invalid memory address: ${str}`, 'warn');
+      return;
+    }
+
+    const alignedAddr = addr & ~3;
+    if (!(alignedAddr in state.simulatedMemory)) {
+      state.simulatedMemory[alignedAddr] = 0;
+    }
+    if (state.pipeline) state.pipeline.lastWrittenMem = alignedAddr;
+    renderMemoryHex();
+    switchInspectorTab('memory');
+    logTerminal(`<span class="text-blue-400 font-mono font-semibold">[Memory View]</span> Jumped to address <strong>0x${(alignedAddr >>> 0).toString(16).padStart(8, '0').toUpperCase()}</strong> (${alignedAddr}).`);
+    showToast(`Jumped to 0x${(alignedAddr >>> 0).toString(16).padStart(8, '0').toUpperCase()}`, 'info');
   }
 
   // --- Breakpoints List in Debugger Sidebar Tab ---
@@ -1251,17 +1281,20 @@ _start:
     state.pipeline.wbInst = null;
     state.prevRegisters = [...state.registers]; // snapshot at the START of the cycle: highlights show what changed THIS cycle
 
+
     // ------------------------------------------------------------------------
     // STAGE 5: WRITE-BACK (WB)
     // ------------------------------------------------------------------------
     if (state.pipeline.MEM_WB.valid) {
       if (state.pipeline.MEM_WB.regWrite && state.pipeline.MEM_WB.rd !== 0) {
+
         state.registers[state.pipeline.MEM_WB.rd] = state.pipeline.MEM_WB.writeBackData | 0;
         state.pipeline.lastWrittenReg = state.pipeline.MEM_WB.rd;
       }
       state.registers[0] = 0; // Letho invariant: hardwired zero
       state.pipeline.instructionsRetired++;
       state.pipeline.wbInst = Object.assign({}, state.pipeline.MEM_WB);
+
     }
 
     // ------------------------------------------------------------------------
@@ -1473,6 +1506,7 @@ _start:
 
     recordPipelineHistory(branchTaken); // UI bookkeeping only: feeds the pipeline chart and the hazard warning
 
+
     const isDrained = isPipelineDrained(instructions.length);
 
     // Active instruction line in editor: follows active execution stage
@@ -1539,6 +1573,7 @@ _start:
         `M3 has no forwarding: put ${p.hazard.nops} NOP(s) between them.</span>`);
     }
 
+
     if (isDrained) {
       const cpi = p.instructionsRetired > 0 ? (p.cycle / p.instructionsRetired).toFixed(2) : '1.00';
       logTerminal(`<span class="text-emerald-400 font-semibold">[Pipeline Drained]</span> Completed in <strong>${p.cycle} cycles</strong>. Instructions retired: <strong>${p.instructionsRetired}</strong>. CPI: <strong>${cpi}</strong>.`);
@@ -1558,6 +1593,7 @@ _start:
 
     // Fresh start when finished or never started. Otherwise (stepped part-way, or parked on a breakpoint) continue.
     if (isPipelineDrained(instructions.length) || (state.pipeline.cycle === 0 && !state.pausedAtBp)) {
+
       resetCpu();
     }
     // Resuming from a breakpoint: step over the one we are parked on, but stop again if the program loops back to it.
@@ -1575,6 +1611,7 @@ _start:
         if (state.breakpoints.has(instructions[currentInstIdx].lineNum) && state.pc !== skipBpAtPC) {
           hitBreakpoint = true;
           state.pausedAtBp = true;
+
           logTerminal(`<span class="text-red-400 font-bold">[Breakpoint Hit]</span> Paused before line ${instructions[currentInstIdx].lineNum}: <code>${escapeHtml(instructions[currentInstIdx].rawText)}</code>`);
           state.activeLineNum = instructions[currentInstIdx].lineNum;
           renderEditor();
@@ -1600,6 +1637,7 @@ _start:
       const nonZero = [8, 9, 10, 13, 6, 7].filter(i => state.registers[i] !== 0);
       const regSummary = nonZero.map(i => `r${i}=<strong>${state.registers[i]}</strong>`).join(' · ') || 'all zero';
 
+
       logTerminal(`
         <div class="p-2.5 bg-zinc-900 rounded-xl border border-emerald-500/40 text-[11px] font-mono space-y-1">
           <div class="text-emerald-400 font-bold flex items-center gap-1.5">
@@ -1613,6 +1651,7 @@ _start:
       if (p.rawHazards > 0) {
         logTerminal(`<span class="text-amber-400 font-mono text-xs">\u26a0 ${p.rawHazards} cycle(s) had a RAW hazard. The M3 core has no forwarding, so some register values above may be stale. Add NOPs between dependent instructions, or use M4.</span>`);
       }
+
       showToast(`Run Complete: ${p.instructionsRetired} retired in ${p.cycle} cycles (CPI: ${cpi})`, 'success');
     }
   }
@@ -1966,6 +2005,7 @@ _start:
       hazard: null,           // RAW hazard visible this cycle (UI warning only; M3 has no forwarding)
       rawHazards: 0,
       chart: { rows: [], flushCycles: [] },
+
       IF_ID: createBubbleIF_ID(),
       ID_EX: createBubbleID_EX(),
       EX_MEM: createBubbleEX_MEM(),
@@ -2081,6 +2121,7 @@ _start:
     const file = state.files[state.activeFile];
     const total = file ? parseExecutableProgram(file.content).instructions.length : 0;
     label.textContent = state.pipeline.cycle > 0 && !isPipelineDrained(total) ? 'Continue' : 'Run';
+
   }
 
   function renderPipelineRegisters() {
@@ -2163,6 +2204,7 @@ _start:
 
     renderPipelineChart();
     updateRunButtonLabel();
+
 
     // 2. Inter-Stage Register Cards
     // IF/ID
@@ -2872,6 +2914,7 @@ _start:
       if (state.pipeline) state.pipeline.lastWrittenMem = null;
       renderMemoryHex();
       logTerminal('<span class="text-amber-400 font-semibold">[Memory Reset]</span> Data memory cleared: every word reads as 0.');
+
       showToast('Data memory reset', 'info');
     });
 
